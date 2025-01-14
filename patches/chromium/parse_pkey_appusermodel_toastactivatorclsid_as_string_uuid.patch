@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?David=20L=C3=B6nnhager?= <dv.lnh.d@gmail.com>
+Date: Tue, 14 Jan 2025 09:36:44 +0100
+Subject: Parse PKEY_AppUserModel_ToastActivatorCLSID as string UUID
+
+Shortcuts may store the PKEY_AppUserModel_ToastActivatorCLSID property
+as a string UUID as opposed to VT_CLSID (i.e., bytes), resulting in
+NOTREACHED being hit. This was seen in the wild for a particular
+version of Slack. The CL adds support for VT_BSTR and VT_LPWSTR, and
+handles both cases string with and without surrounding braces the UUID.
+
+diff --git a/base/win/shortcut.cc b/base/win/shortcut.cc
+index e790adb2f1d6529ac0dd77145f5da2796264c7ae..b084ef302b411a45e6ce221a752852404f337925 100644
+--- a/base/win/shortcut.cc
++++ b/base/win/shortcut.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "base/win/shortcut.h"
+ 
++#define RPC_USE_NATIVE_WCHAR
++
+ #include <objbase.h>
+ 
+ #include <propkey.h>
+@@ -341,6 +343,31 @@ bool ResolveShortcutProperties(const FilePath& shortcut_path,
+           properties->set_toast_activator_clsid(
+               *(pv_toast_activator_clsid.get().puuid));
+           break;
++        case VT_LPWSTR: {
++            CLSID clsid;
++            wchar_t *wstr = pv_toast_activator_clsid.get().pwszVal;
++            /* parse string of format "{...}" or "..." */
++            if (CLSIDFromString(wstr, &clsid) != NO_ERROR
++                && UuidFromStringW(wstr, &clsid) != NO_ERROR)
++            {
++                NOTREACHED() << "Invalid CLSID";
++            }
++            properties->set_toast_activator_clsid(clsid);
++            break;
++        }
++        case VT_BSTR: {
++            CLSID clsid;
++            BSTR bs = pv_toast_activator_clsid.get().bstrVal;
++            std::wstring ws(bs, ::SysStringLen(bs));
++            /* parse string of format "{...}" or "..." */
++            if (CLSIDFromString(ws.c_str(), &clsid) != NO_ERROR
++                && UuidFromStringW(ws.data(), &clsid) != NO_ERROR)
++            {
++                NOTREACHED() << "Invalid CLSID";
++            }
++            properties->set_toast_activator_clsid(clsid);
++            break;
++        }
+         default:
+           NOTREACHED() << "Unexpected variant type: "
+                        << pv_toast_activator_clsid.get().vt;
